@@ -5,6 +5,31 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Выгодняк</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, set, get, remove, onValue } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCFA9dgRfRtT590-nfs4U0Oc-HbE0fEbBU",
+    authDomain: "vygodnyak.firebaseapp.com",
+    databaseURL: "https://vygodnyak-default-rtdb.firebaseio.com",
+    projectId: "vygodnyak",
+    storageBucket: "vygodnyak.firebasestorage.app",
+    messagingSenderId: "988997211627",
+    appId: "1:988997211627:web:deab4c4f2a726f597b35ae"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  window._db = db;
+  window._ref = ref;
+  window._set = set;
+  window._get = get;
+  window._remove = remove;
+  window._onValue = onValue;
+  window._firebaseReady = true;
+  window.dispatchEvent(new Event('firebaseReady'));
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#f8f9fc;--white:#fff;--navy:#2e4057;--navy2:#3d5270;--blue:#7fa4c0;--gray:#7a8fa0;--light:#e8eef5;--border:#dde4ed;--text:#1a2535;--defect-bg:#fdecea;--defect-col:#c0392b;--success-bg:#e6f4ee;--success-col:#2a7a5a;}
@@ -236,9 +261,9 @@ const DEMO=[
 ];
 
 let S={
-  tab:'shop', // shop | cats | admin
+  tab:'shop', loading:true, // shop | cats | admin
   view:'list', // list | detail | catview | success
-  products:JSON.parse(localStorage.getItem('sl3_p')||'null')||DEMO,
+  products:[],
   cart:JSON.parse(localStorage.getItem('sl3_c')||'[]'),
   search:'', filterCat:'', gender:'all',
   sel:null, cartOpen:false,
@@ -246,8 +271,40 @@ let S={
   editId:null, oName:'', oPhone:'', oAddr:'', sending:false
 };
 
-const sp=()=>localStorage.setItem('sl3_p',JSON.stringify(S.products));
 const sc=()=>localStorage.setItem('sl3_c',JSON.stringify(S.cart));
+
+function sp(){
+  if(!window._db) return;
+  const productsObj={};
+  S.products.forEach(p=>{ productsObj['p_'+p.id]=p; });
+  window._set(window._ref(window._db,'products'), productsObj)
+    .catch(e=>console.error('Firebase save error:',e));
+}
+
+function loadProducts(){
+  if(!window._db){ setTimeout(loadProducts,300); return; }
+  S.loading=true; render();
+  window._get(window._ref(window._db,'products')).then(snap=>{
+    if(snap.exists()){
+      const data=snap.val();
+      S.products=Object.values(data).sort((a,b)=>a.id-b.id);
+    } else {
+      // First load - save demo data
+      S.products=DEMO;
+      sp();
+    }
+    S.loading=false;
+    render();
+  }).catch(e=>{ console.error(e); S.loading=false; render(); });
+  // Real-time sync
+  window._onValue(window._ref(window._db,'products'), snap=>{
+    if(snap.exists()){
+      const data=snap.val();
+      S.products=Object.values(data).sort((a,b)=>a.id-b.id);
+      render();
+    }
+  });
+}
 const cnt=()=>S.cart.reduce((a,i)=>a+i.qty,0);
 const tot=()=>S.cart.reduce((a,i)=>a+i.price*i.qty,0);
 const disc=p=>p.oldPrice&&p.oldPrice>p.price?Math.round((1-p.price/p.oldPrice)*100):null;
@@ -279,7 +336,11 @@ function saveProd(){
   S.editId=null;S.form={name:'',price:'',oldPrice:'',cat:'clothes-m',gender:'m',emoji:'📦',img:'',desc:'',defect:false};sp();render();toast('Товар сохранён ✓');
 }
 function editProd(p){S.form={name:p.name,price:p.price,oldPrice:p.oldPrice||'',cat:p.cat,gender:p.gender||'u',emoji:p.emoji||'',img:p.img||'',photos:p.photos||[],desc:p.desc||'',defect:!!p.defect};S.editId=p.id;S.tab='admin';render();window.scrollTo(0,0);}
-function delProd(id){S.products=S.products.filter(p=>p.id!==id);sp();render();}
+function delProd(id){
+  S.products=S.products.filter(p=>p.id!==id);
+  if(window._db) window._remove(window._ref(window._db,'products/p_'+id));
+  sp(); render();
+}
 
 function openCat(catId){S.filterCat=catId;S.view='catview';S.tab='shop';render();}
 
@@ -324,6 +385,11 @@ function buildCartDrawer(){
 }
 
 function build(){
+  if(S.loading) return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)">
+    <div style="font-size:48px;margin-bottom:16px">🛍️</div>
+    <div style="font-family:'Playfair Display',serif;font-size:22px;color:var(--navy);margin-bottom:8px">Выгодняк</div>
+    <div style="font-size:13px;color:var(--gray)">Загружаем товары...</div>
+  </div>`;
   const nav=`<nav class="nav">
     <div class="nav-top">
       <div class="nav-logo">
@@ -562,6 +628,15 @@ function bind(){
 }
 
 render();
+
+// Init Firebase
+function initFirebase(){
+  if(window._firebaseReady){ loadProducts(); }
+  else { window.addEventListener('firebaseReady', loadProducts, {once:true}); }
+}
+if(document.readyState==='loading'){
+  document.addEventListener('DOMContentLoaded', initFirebase);
+} else { initFirebase(); }
 </script>
 </body>
 </html>
